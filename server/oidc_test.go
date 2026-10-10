@@ -947,3 +947,65 @@ func TestOIDCRestartRequiresNewLogin(t *testing.T) {
 		t.Fatalf("new backend process failed restart verification: %v\n%s", err, output)
 	}
 }
+
+func TestOIDCSettingsRoundTripThroughAdminAPI(t *testing.T) {
+	f := newOIDCFixture(t)
+	token, err := common.GenerateToken(f.admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var defaults []model.SettingItem
+	if err := json.Unmarshal(f.api(t, "POST", "/api/admin/setting/default?group="+strconv.Itoa(model.SSO), token, nil, 200), &defaults); err != nil {
+		t.Fatal(err)
+	}
+	var updates []model.SettingItem
+	for _, item := range defaults {
+		switch item.Key {
+		case conf.SSOOIDCResource:
+			if item.Type != conf.TypeString {
+				t.Fatal("resource must render as a string input")
+			}
+			item.Value = testOIDCResource
+		case conf.SSOOIDCRoleMapping:
+			if item.Type != conf.TypeText {
+				t.Fatal("role mapping must render as a multiline input")
+			}
+			item.Value = testOIDCPolicy
+		default:
+			continue
+		}
+		if item.Flag != model.PRIVATE || item.Group != model.SSO || item.Help == "" {
+			t.Fatalf("missing private SSO metadata for %s", item.Key)
+		}
+		updates = append(updates, item)
+	}
+	if len(updates) != 2 {
+		t.Fatal("OIDC settings missing from SSO defaults")
+	}
+	f.api(t, "POST", "/api/admin/setting/save", token, updates, 200)
+	var saved []model.SettingItem
+	if err := json.Unmarshal(f.api(t, "GET", "/api/admin/setting/list?group="+strconv.Itoa(model.SSO), token, nil, 200), &saved); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range updates {
+		found := false
+		for _, got := range saved {
+			if got.Key == want.Key {
+				found = got.Value == want.Value && got.Help == want.Help && got.Type == want.Type && got.Flag == want.Flag
+			}
+		}
+		if !found {
+			t.Fatalf("setting did not survive save and reload: %s", want.Key)
+		}
+	}
+	var public map[string]string
+	if err := json.Unmarshal(f.api(t, "GET", "/api/public/settings", "", nil, 200), &public); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range updates {
+		if _, ok := public[item.Key]; ok {
+			t.Fatalf("private OIDC setting exposed publicly: %s", item.Key)
+		}
+	}
+	f.login(t, testGrant{subject: "settings-user", name: "settings-user", roles: []string{"base:reader"}}, true)
+}
