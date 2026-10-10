@@ -14,6 +14,11 @@ JWT access tokens for the configured resource, and support refresh tokens to
 keep access working after expiry. Opaque access tokens are rejected; no
 introspection or provider management API is used.
 
+In **Manage → Settings → SSO**, configure the two additional private settings
+below. The resource uses a string input and the CEL expression uses a multiline
+input; both are saved through the existing settings API. Use the matching
+frontend build for their translated labels and help text.
+
 Two additional private SSO settings enable this feature:
 
 | Setting | Value |
