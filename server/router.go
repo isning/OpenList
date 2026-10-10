@@ -75,12 +75,12 @@ func Init(e *gin.Engine) {
 	api.POST("/auth/login/hash", handles.LoginHash)
 	api.POST("/auth/login/ldap", handles.LoginLdap)
 	auth.GET("/me", handles.CurrentUser)
-	auth.POST("/me/update", handles.UpdateCurrent)
+	auth.POST("/me/update", middlewares.OIDCAccountReadOnly, handles.UpdateCurrent)
 	auth.GET("/me/sshkey/list", handles.ListMyPublicKey)
-	auth.POST("/me/sshkey/add", handles.AddMyPublicKey)
-	auth.POST("/me/sshkey/delete", handles.DeleteMyPublicKey)
-	auth.POST("/auth/2fa/generate", handles.Generate2FA)
-	auth.POST("/auth/2fa/verify", handles.Verify2FA)
+	auth.POST("/me/sshkey/add", middlewares.OIDCAccountReadOnly, handles.AddMyPublicKey)
+	auth.POST("/me/sshkey/delete", middlewares.OIDCAccountReadOnly, handles.DeleteMyPublicKey)
+	auth.POST("/auth/2fa/generate", middlewares.OIDCAccountReadOnly, handles.Generate2FA)
+	auth.POST("/auth/2fa/verify", middlewares.OIDCAccountReadOnly, handles.Verify2FA)
 	auth.GET("/auth/logout", handles.LogOut)
 
 	// auth
@@ -92,9 +92,9 @@ func Init(e *gin.Engine) {
 	// webauthn
 	api.GET("/authn/webauthn_begin_login", handles.BeginAuthnLogin)
 	api.POST("/authn/webauthn_finish_login", handles.FinishAuthnLogin)
-	webauthn.GET("/webauthn_begin_registration", handles.BeginAuthnRegistration)
-	webauthn.POST("/webauthn_finish_registration", handles.FinishAuthnRegistration)
-	webauthn.POST("/delete_authn", handles.DeleteAuthnLogin)
+	webauthn.GET("/webauthn_begin_registration", middlewares.OIDCAccountReadOnly, handles.BeginAuthnRegistration)
+	webauthn.POST("/webauthn_finish_registration", middlewares.OIDCAccountReadOnly, handles.FinishAuthnRegistration)
+	webauthn.POST("/delete_authn", middlewares.OIDCAccountReadOnly, handles.DeleteAuthnLogin)
 	webauthn.GET("/getcredentials", handles.GetAuthnCredentials)
 
 	// no need auth

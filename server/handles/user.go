@@ -55,6 +55,9 @@ func UpdateUser(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
+	if denyOIDCOwnerUpdate(c, req.ID) {
+		return
+	}
 	user, err := op.GetUserById(req.ID)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
@@ -121,11 +124,24 @@ func Cancel2FAById(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
+	if denyOIDCOwnerUpdate(c, uint(id)) {
+		return
+	}
 	if err := op.Cancel2FAById(uint(id)); err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}
 	common.SuccessResp(c)
+}
+
+// A mapped administrator cannot use user administration to bypass the personal
+// account guard. Other accounts remain subject to native administrator powers.
+func denyOIDCOwnerUpdate(c *gin.Context, userID uint) bool {
+	if owner, ok := c.Get(common.OIDCSessionOwnerContextKey); ok && owner == userID {
+		common.ErrorStrResp(c, "OIDC-managed sessions cannot change authentication information", 403)
+		return true
+	}
+	return false
 }
 
 func DelUserCache(c *gin.Context) {

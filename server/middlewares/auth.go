@@ -17,7 +17,7 @@ import (
 func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 	return func(c *gin.Context) {
 		token := c.GetHeader("Authorization")
-		if subtle.ConstantTimeCompare([]byte(token), []byte(setting.GetStr(conf.Token))) == 1 {
+		if token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(setting.GetStr(conf.Token))) == 1 {
 			admin, err := op.GetAdmin()
 			if err != nil {
 				common.ErrorResp(c, err, 500)
@@ -54,20 +54,41 @@ func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 		}
 		user, err := op.GetUserByName(userClaims.Username)
 		if err != nil {
+			if userClaims.OIDCSessionID != "" {
+				_ = common.InvalidateToken(token)
+			}
 			common.ErrorResp(c, err, 401)
 			c.Abort()
 			return
 		}
 		// validate password timestamp
 		if userClaims.PwdTS != user.PwdTS {
+			if userClaims.OIDCSessionID != "" {
+				_ = common.InvalidateToken(token)
+			}
 			common.ErrorStrResp(c, "Password has been changed, login please", 401)
 			c.Abort()
 			return
 		}
 		if user.Disabled {
+			if userClaims.OIDCSessionID != "" {
+				_ = common.InvalidateToken(token)
+			}
 			common.ErrorStrResp(c, "Current user is disabled, replace please", 401)
 			c.Abort()
 			return
+		}
+		ownerID := user.ID
+		user, err = common.AuthorizeOIDC(c.Request.Context(), user, userClaims)
+		if err != nil {
+			_ = common.InvalidateToken(token)
+			common.ErrorResp(c, err, 401)
+			c.Abort()
+			return
+		}
+		if userClaims.OIDCSessionID != "" {
+			c.Set(common.OIDCSessionContextKey, userClaims.OIDCSessionID)
+			c.Set(common.OIDCSessionOwnerContextKey, ownerID)
 		}
 		common.GinAppendValues(c, conf.UserKey, user)
 		log.Debugf("use login token: %+v", user)
@@ -77,7 +98,7 @@ func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 
 func Authn(c *gin.Context) {
 	token := c.GetHeader("Authorization")
-	if subtle.ConstantTimeCompare([]byte(token), []byte(setting.GetStr(conf.Token))) == 1 {
+	if token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(setting.GetStr(conf.Token))) == 1 {
 		admin, err := op.GetAdmin()
 		if err != nil {
 			common.ErrorResp(c, err, 500)
@@ -109,20 +130,41 @@ func Authn(c *gin.Context) {
 	}
 	user, err := op.GetUserByName(userClaims.Username)
 	if err != nil {
+		if userClaims.OIDCSessionID != "" {
+			_ = common.InvalidateToken(token)
+		}
 		common.ErrorResp(c, err, 401)
 		c.Abort()
 		return
 	}
 	// validate password timestamp
 	if userClaims.PwdTS != user.PwdTS {
+		if userClaims.OIDCSessionID != "" {
+			_ = common.InvalidateToken(token)
+		}
 		common.ErrorStrResp(c, "Password has been changed, login please", 401)
 		c.Abort()
 		return
 	}
 	if user.Disabled {
+		if userClaims.OIDCSessionID != "" {
+			_ = common.InvalidateToken(token)
+		}
 		common.ErrorStrResp(c, "Current user is disabled, replace please", 401)
 		c.Abort()
 		return
+	}
+	ownerID := user.ID
+	user, err = common.AuthorizeOIDC(c.Request.Context(), user, userClaims)
+	if err != nil {
+		_ = common.InvalidateToken(token)
+		common.ErrorResp(c, err, 401)
+		c.Abort()
+		return
+	}
+	if userClaims.OIDCSessionID != "" {
+		c.Set(common.OIDCSessionContextKey, userClaims.OIDCSessionID)
+		c.Set(common.OIDCSessionOwnerContextKey, ownerID)
 	}
 	common.GinAppendValues(c, conf.UserKey, user)
 	log.Debugf("use login token: %+v", user)

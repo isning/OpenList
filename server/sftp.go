@@ -102,6 +102,9 @@ func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.
 	pass := string(password)
 	userObj, err := op.GetUserByName(conn.User())
 	if err == nil {
+		if common.RequiresOIDC(userObj) {
+			return nil, errors.New("login through OIDC is required")
+		}
 		err = userObj.ValidateRawPassword(pass)
 		if err != nil && setting.GetBool(conf.LdapLoginEnabled) && userObj.AllowLdap {
 			err = common.HandleLdapLogin(conn.User(), pass)
@@ -113,7 +116,7 @@ func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.
 		model.LoginCache.Set(ip, count+1)
 		return nil, err
 	}
-	if userObj.Disabled || !userObj.CanFTPAccess() {
+	if common.RequiresOIDC(userObj) || userObj.Disabled || !userObj.CanFTPAccess() {
 		model.LoginCache.Set(ip, count+1)
 		return nil, errors.New("user is not allowed to access via SFTP")
 	}
@@ -126,7 +129,7 @@ func (d *SftpDriver) PublicKeyAuth(conn ssh.ConnMetadata, key ssh.PublicKey) (*s
 	if err != nil {
 		return nil, err
 	}
-	if userObj.Disabled || !userObj.CanFTPAccess() {
+	if common.RequiresOIDC(userObj) || userObj.Disabled || !userObj.CanFTPAccess() {
 		return nil, errors.New("user is not allowed to access via SFTP")
 	}
 	keys, _, err := op.GetSSHPublicKeyByUserId(userObj.ID, 1, -1)

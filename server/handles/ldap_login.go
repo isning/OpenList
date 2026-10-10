@@ -22,6 +22,10 @@ func LoginLdap(c *gin.Context) {
 		return
 	}
 	user, err := op.GetUserByName(req.Username)
+	if err == nil && common.RequiresOIDC(user) {
+		common.ErrorStrResp(c, "login through OIDC is required", 401)
+		return
+	}
 	if err == nil && !user.AllowLdap {
 		common.ErrorStrResp(c, "login via ldap is not allowed", 403)
 		return

@@ -1,6 +1,7 @@
 package handles
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/go-cache"
@@ -16,6 +18,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/oidcauth"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
@@ -98,7 +101,7 @@ func generateSSOBindingToken(c *gin.Context, purpose, ssoID string) (string, err
 		c.SetCookie(
 			ssoBindingCookie,
 			session,
-			int((stateExpire+ssoBindingExpire).Seconds()),
+			int((stateExpire + ssoBindingExpire).Seconds()),
 			path.Join(conf.URL.Path, "/api"),
 			"",
 			strings.HasPrefix(common.GetApiUrl(c), "https://"),
@@ -239,13 +242,68 @@ func SSOLoginRedirect(c *gin.Context) {
 		if bindingState == "" {
 			bindingState = generateState(clientId, c.ClientIP())
 		}
-		c.Redirect(http.StatusFound, oauth2Config.AuthCodeURL(bindingState))
+		policy, policyKey, err := common.OIDCPolicy()
+		if err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
+		var options []oauth2.AuthCodeOption
+		if policy != nil {
+			flow := &oidcLoginFlow{Verifier: oauth2.GenerateVerifier(), Nonce: random.String(32), PolicyKey: policyKey}
+			oidcFlowCache.Set(bindingState, flow, cache.WithEx[*oidcLoginFlow](stateExpire))
+			options = append(options, oauth2.S256ChallengeOption(flow.Verifier), oauth2.SetAuthURLParam("nonce", flow.Nonce), oauth2.SetAuthURLParam("resource", policy.Resource))
+		}
+		c.Redirect(http.StatusFound, oauth2Config.AuthCodeURL(bindingState, options...))
 		return
 	default:
 		common.ErrorStrResp(c, "invalid platform", 400)
 		return
 	}
 	c.Redirect(302, rUrl+urlValues.Encode())
+}
+
+type oidcLoginFlow struct {
+	Verifier, Nonce, PolicyKey string
+}
+
+var oidcFlowCache = cache.NewMemCache[*oidcLoginFlow]()
+var oidcFlowMu sync.Mutex
+var oidcUserMu sync.Mutex
+
+func consumeOIDCFlow(state string) (*oidcLoginFlow, bool) {
+	oidcFlowMu.Lock()
+	defer oidcFlowMu.Unlock()
+	flow, ok := oidcFlowCache.Get(state)
+	oidcFlowCache.Del(state)
+	return flow, ok
+}
+
+func mappedOIDCUser(issuer, subject, username, legacyID string) (*model.User, error) {
+	// Serialize initial provisioning: SsoID has no unique database constraint.
+	oidcUserMu.Lock()
+	defer oidcUserMu.Unlock()
+	identity := oidcauth.Identity(issuer, subject)
+	user, err := db.GetUserBySSOID(identity)
+	if err == nil {
+		return user, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if legacy, lookupErr := db.GetUserBySSOID(legacyID); lookupErr == nil && legacy != nil {
+		return nil, errors.New("legacy SSO account requires explicit rebinding before OIDC role mapping")
+	} else if lookupErr != nil && !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+		return nil, lookupErr
+	}
+	if username == "" {
+		username = subject
+	}
+	if _, lookupErr := db.GetUserByName(username); lookupErr == nil {
+		username += "_" + strings.TrimPrefix(identity, "oidc:")[:12]
+	} else if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+		return nil, lookupErr
+	}
+	return autoRegister(username, identity, err)
 }
 
 var ssoClient = resty.New().SetRetryCount(3)
@@ -255,7 +313,7 @@ func GetOIDCClient(c *gin.Context, useCompatibility bool, redirectUri, method st
 		redirectUri = ssoRedirectUri(c, useCompatibility, method)
 	}
 	endpoint := setting.GetStr(conf.SSOEndpointName)
-	provider, err := oidc.NewProvider(c, endpoint)
+	provider, err := oidc.NewProvider(oidc.ClientContext(c.Request.Context(), &http.Client{Timeout: 15 * time.Second}), endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +321,14 @@ func GetOIDCClient(c *gin.Context, useCompatibility bool, redirectUri, method st
 	clientSecret := setting.GetStr(conf.SSOClientSecret)
 	extraScopes := []string{}
 	if setting.GetStr(conf.SSOExtraScopes) != "" {
-		extraScopes = strings.Split(setting.GetStr(conf.SSOExtraScopes), " ")
+		extraScopes = strings.Fields(setting.GetStr(conf.SSOExtraScopes))
+	}
+	policy, _, err := common.OIDCPolicy()
+	if err != nil {
+		return nil, err
+	}
+	if policy != nil && !utils.SliceContains(extraScopes, "offline_access") {
+		extraScopes = append(extraScopes, "offline_access")
 	}
 	return &oauth2.Config{
 		ClientID:     clientId,
@@ -328,7 +393,7 @@ func OIDCLoginCallback(c *gin.Context) {
 	}
 	clientId := setting.GetStr(conf.SSOClientId)
 	endpoint := setting.GetStr(conf.SSOEndpointName)
-	provider, err := oidc.NewProvider(c, endpoint)
+	provider, err := oidc.NewProvider(oidc.ClientContext(c.Request.Context(), &http.Client{Timeout: 15 * time.Second}), endpoint)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
@@ -347,8 +412,29 @@ func OIDCLoginCallback(c *gin.Context) {
 		common.ErrorStrResp(c, "incorrect or expired state parameter", 400)
 		return
 	}
-	oauth2Token, err := oauth2Config.Exchange(c, c.Query("code"))
+	policy, policyKey, err := common.OIDCPolicy()
 	if err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	var flow *oidcLoginFlow
+	var options []oauth2.AuthCodeOption
+	if policy != nil {
+		var ok bool
+		flow, ok = consumeOIDCFlow(c.Query("state"))
+		if !ok || flow.PolicyKey != policyKey {
+			common.ErrorStrResp(c, "incorrect or expired OIDC login state", 400)
+			return
+		}
+		options = append(options, oauth2.VerifierOption(flow.Verifier), oauth2.SetAuthURLParam("resource", policy.Resource))
+	}
+	exchangeCtx := context.WithValue(c.Request.Context(), oauth2.HTTPClient, &http.Client{Timeout: 15 * time.Second})
+	oauth2Token, err := oauth2Config.Exchange(exchangeCtx, c.Query("code"), options...)
+	if err != nil {
+		if policy != nil {
+			common.ErrorStrResp(c, "OIDC token exchange failed", 400)
+			return
+		}
 		common.ErrorResp(c, err, 400)
 		return
 	}
@@ -360,10 +446,33 @@ func OIDCLoginCallback(c *gin.Context) {
 	verifier := provider.Verifier(&oidc.Config{
 		ClientID: clientId,
 	})
-	_, err = verifier.Verify(c, rawIDToken)
+	idToken, err := verifier.Verify(c, rawIDToken)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
+	}
+	var authorization *oidcauth.Session
+	if policy != nil {
+		if idToken.Nonce != flow.Nonce {
+			common.ErrorStrResp(c, "invalid OIDC nonce", 400)
+			return
+		}
+		accessVerifier, err := common.AccessTokenVerifier(provider, endpoint, policy.Resource)
+		if err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
+		authorization, err = oidcauth.NewSession(c.Request.Context(), oauth2Config, accessVerifier, policy, idToken.Subject, oauth2Token)
+		if err != nil {
+			common.ErrorResp(c, err, 401)
+			return
+		}
+		// Only successful native-token issuance transfers ownership to the cache.
+		defer func() {
+			if authorization != nil {
+				authorization.Close()
+			}
+		}()
 	}
 	payload, err := parseJWT(rawIDToken)
 	if err != nil {
@@ -371,11 +480,17 @@ func OIDCLoginCallback(c *gin.Context) {
 		return
 	}
 	userID := utils.Json.Get(payload, setting.GetStr(conf.SSOOIDCUsernameKey, "name")).ToString()
+	if userID == "" && policy != nil {
+		userID = idToken.Subject
+	}
 	if userID == "" {
 		common.ErrorStrResp(c, "cannot get username from OIDC provider", 400)
 		return
 	}
 	if method == "get_sso_id" {
+		if policy != nil {
+			userID = oidcauth.Identity(endpoint, idToken.Subject)
+		}
 		bindingProof, err := generateSSOBindingToken(c, ssoBindingProofPurpose, userID)
 		if err != nil {
 			common.ErrorResp(c, err, 500)
@@ -389,19 +504,30 @@ func OIDCLoginCallback(c *gin.Context) {
 		return
 	}
 	if method == "sso_get_token" {
-		user, err := db.GetUserBySSOID(userID)
-		if err != nil {
-			user, err = autoRegister(userID, userID, err)
+		var user *model.User
+		if policy != nil {
+			user, err = mappedOIDCUser(endpoint, idToken.Subject, userID, userID)
+		} else {
+			user, err = db.GetUserBySSOID(userID)
 			if err != nil {
-				common.ErrorResp(c, err, 400)
-				return
+				user, err = autoRegister(userID, userID, err)
 			}
 		}
-		token, err := common.GenerateToken(user)
 		if err != nil {
 			common.ErrorResp(c, err, 400)
 			return
 		}
+		var token string
+		if policy != nil {
+			token, err = common.GenerateOIDCToken(user, authorization, policyKey)
+		} else {
+			token, err = common.GenerateToken(user)
+		}
+		if err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
+		authorization = nil
 		if useCompatibility {
 			c.Redirect(302, common.GetApiUrl(c)+"/@login?token="+token)
 			return
