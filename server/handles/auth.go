@@ -59,6 +59,10 @@ func loginHash(c *gin.Context, req *LoginReq) {
 		model.LoginCache.Set(ip, count+1)
 		return
 	}
+	if common.RequiresOIDC(user) {
+		common.ErrorStrResp(c, "login through OIDC is required", 401)
+		return
+	}
 	// validate password hash
 	if err := user.ValidatePwdStaticHash(req.Password); err != nil {
 		common.ErrorStrResp(c, model.InvalidUsernameOrPassword, 401)
@@ -96,6 +100,7 @@ func CurrentUser(c *gin.Context) {
 	userResp := UserResp{
 		User: *user,
 	}
+	userResp.Role = user.EffectiveRole()
 	userResp.Password = ""
 	if userResp.OtpSecret != "" {
 		userResp.Otp = true

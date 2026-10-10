@@ -129,6 +129,9 @@ func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) 
 	} else {
 		userObj, err = op.GetUserByName(user)
 		if err == nil {
+			if common.RequiresOIDC(userObj) {
+				return nil, errors.New("login through OIDC is required")
+			}
 			err = userObj.ValidateRawPassword(pass)
 			if err != nil && setting.GetBool(conf.LdapLoginEnabled) && userObj.AllowLdap {
 				err = common.HandleLdapLogin(user, pass)

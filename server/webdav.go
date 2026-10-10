@@ -66,7 +66,7 @@ func WebDAVAuth(c *gin.Context) {
 	username, password, ok := c.Request.BasicAuth()
 	if !ok {
 		bt := c.GetHeader("Authorization")
-		log.Debugf("[webdav auth] token: %s", bt)
+		log.Debug("[webdav auth] checking bearer credential")
 		if strings.HasPrefix(bt, "Bearer") {
 			bt = strings.TrimPrefix(bt, "Bearer ")
 			token := setting.GetStr(conf.Token)
@@ -154,6 +154,9 @@ func WebDAVAuth(c *gin.Context) {
 func tryLogin(username, password string) (*model.User, bool) {
 	user, err := op.GetUserByName(username)
 	if err == nil {
+		if common.RequiresOIDC(user) {
+			return nil, false
+		}
 		err = user.ValidateRawPassword(password)
 		if err != nil && setting.GetBool(conf.LdapLoginEnabled) && user.AllowLdap {
 			err = common.HandleLdapLogin(username, password)

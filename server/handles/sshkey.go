@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -99,6 +100,16 @@ func DeletePublicKey(c *gin.Context) {
 	if err != nil {
 		common.ErrorStrResp(c, "id format invalid", 400)
 		return
+	}
+	if _, managed := c.Get(common.OIDCSessionOwnerContextKey); managed {
+		key, err := db.GetSSHPublicKeyById(uint(keyId))
+		if err != nil {
+			common.ErrorResp(c, err, 404)
+			return
+		}
+		if denyOIDCOwnerUpdate(c, key.UserId) {
+			return
+		}
 	}
 	err = op.DeleteSSHPublicKeyById(uint(keyId))
 	if err != nil {

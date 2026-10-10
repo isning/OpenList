@@ -113,6 +113,8 @@ const (
 	SSOEndpointName      = "sso_endpoint_name"
 	SSOJwtPublicKey      = "sso_jwt_public_key"
 	SSOExtraScopes       = "sso_extra_scopes"
+	SSOOIDCResource      = "sso_oidc_resource"
+	SSOOIDCRoleMapping   = "sso_oidc_role_mapping"
 	SSOAutoRegister      = "sso_auto_register"
 	SSODefaultDir        = "sso_default_dir"
 	SSODefaultPermission = "sso_default_permission"

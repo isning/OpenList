@@ -38,6 +38,8 @@ var (
 )
 
 type User struct {
+	sessionRole *int
+
 	ID       uint   `json:"id" gorm:"primaryKey"`                      // unique key
 	Username string `json:"username" gorm:"unique" binding:"required"` // username
 	PwdHash  string `json:"-"`                                         // password hash
@@ -71,12 +73,28 @@ type User struct {
 	AllowLdap  bool   `json:"allow_ldap" gorm:"default:true"`
 }
 
+// EffectiveRole returns the role of this authenticated session. The stored Role
+// remains unchanged, including when profile updates save the user to the DB.
+func (u *User) EffectiveRole() int {
+	if u.sessionRole != nil {
+		return *u.sessionRole
+	}
+	return u.Role
+}
+
+// WithSessionRole copies the user so cached users cannot inherit session grants.
+func (u *User) WithSessionRole(role int) *User {
+	copy := *u
+	copy.sessionRole = &role
+	return &copy
+}
+
 func (u *User) IsGuest() bool {
-	return u.Role == GUEST
+	return u.EffectiveRole() == GUEST
 }
 
 func (u *User) IsAdmin() bool {
-	return u.Role == ADMIN
+	return u.EffectiveRole() == ADMIN
 }
 
 func (u *User) ValidateRawPassword(password string) error {

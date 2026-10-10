@@ -38,6 +38,10 @@ func BeginAuthnLogin(c *gin.Context) {
 		var user *model.User
 		user, err = db.GetUserByName(username)
 		if err == nil {
+			if common.RequiresOIDC(user) {
+				common.ErrorStrResp(c, "login through OIDC is required", 401)
+				return
+			}
 			options, sessionData, err = authnInstance.BeginLogin(user)
 		}
 	} else { // client-side discoverable login
@@ -91,6 +95,10 @@ func FinishAuthnLogin(c *gin.Context) {
 			common.ErrorResp(c, err, 400)
 			return
 		}
+		if common.RequiresOIDC(user) {
+			common.ErrorStrResp(c, "login through OIDC is required", 401)
+			return
+		}
 		_, err = authnInstance.FinishLogin(user, sessionData, c.Request)
 	} else { // client-side discoverable login
 		_, err = authnInstance.FinishDiscoverableLogin(func(_, userHandle []byte) (webauthn.User, error) {
@@ -101,6 +109,9 @@ func FinishAuthnLogin(c *gin.Context) {
 			user, err = db.GetUserById(userID)
 			if err != nil {
 				return nil, err
+			}
+			if common.RequiresOIDC(user) {
+				return nil, fmt.Errorf("login through OIDC is required")
 			}
 
 			return user, nil
