@@ -1009,3 +1009,41 @@ func TestOIDCSettingsRoundTripThroughAdminAPI(t *testing.T) {
 	}
 	f.login(t, testGrant{subject: "settings-user", name: "settings-user", roles: []string{"base:reader"}}, true)
 }
+
+func TestOIDCInitialUsernameMapping(t *testing.T) {
+	f := newOIDCFixture(t)
+	f.setting(t, conf.SSOOIDCUsernameMapping, "'oidc:' + claims.sub")
+	f.login(t, testGrant{subject: "alice-sub", name: "alice", roles: []string{"base:admin"}}, true)
+	user := f.account(t, "alice-sub")
+	if user.Username != "oidc:alice-sub" {
+		t.Fatalf("unexpected initial username %q", user.Username)
+	}
+	f.setting(t, conf.SSOOIDCUsernameMapping, "'changed:' + claims.sub")
+	f.login(t, testGrant{subject: "alice-sub", name: "renamed", roles: []string{"base:admin"}}, true)
+	if f.account(t, "alice-sub").Username != user.Username {
+		t.Fatal("existing username changed")
+	}
+	f.setting(t, conf.SSOOIDCUsernameMapping, "claims.nonexistent")
+	f.login(t, testGrant{subject: "new-sub", name: "new", roles: []string{"base:reader"}}, false)
+}
+
+func TestOIDCUsernameCollisionDoesNotInheritAccount(t *testing.T) {
+	f := newOIDCFixture(t)
+	local := (&model.User{Username: "oidc:alice-sub", Role: model.GENERAL, BasePath: f.mount + "/private", Permission: 65535}).SetPassword("synthetic-local-password")
+	if err := op.CreateUser(local); err != nil {
+		t.Fatal(err)
+	}
+	f.setting(t, conf.SSOOIDCUsernameMapping, "'oidc:' + claims.sub")
+	token := f.login(t, testGrant{subject: "alice-sub", name: "alice", roles: []string{"base:reader"}}, true)
+	owner := f.account(t, "alice-sub")
+	if owner.ID == local.ID || owner.Username == local.Username || owner.BasePath == local.BasePath || owner.Permission == local.Permission {
+		t.Fatal("OIDC user inherited preexisting account")
+	}
+	persisted, err := op.GetUserById(local.ID)
+	if err != nil || persisted.SsoID != "" || persisted.BasePath != local.BasePath || persisted.Permission != local.Permission {
+		t.Fatal("preexisting account modified")
+	}
+	if f.current(t, token).ID != owner.ID {
+		t.Fatal("session uses preexisting account")
+	}
+}

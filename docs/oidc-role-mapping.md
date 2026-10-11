@@ -136,3 +136,15 @@ go test ./internal/oidcauth ./server -run 'TestRoleMapping|TestOIDC' -count=1
 go test -race ./internal/oidcauth ./server -run 'TestRoleMapping|TestOIDC' -count=1
 go test ./...
 ```
+
+### Initial usernames
+
+`sso_oidc_username_mapping` optionally evaluates a CEL string expression over
+verified ID-token `claims` when provisioning a new mapped OIDC account. For
+example, `'oidc:' + claims.sub` produces `oidc:alice`. It does not change the
+issuer/subject binding, authorize requests, or rename existing users. Leave it
+empty to retain the existing username-claim behavior. Invalid expressions,
+missing claims, empty names, path separators, control characters, surrounding
+whitespace and names exceeding 255 bytes reject provisioning. Multiple issuers
+should use distinct naming namespaces; username collisions remain separate
+accounts and never bind to the existing account.

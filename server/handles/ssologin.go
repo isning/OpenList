@@ -506,7 +506,25 @@ func OIDCLoginCallback(c *gin.Context) {
 	if method == "sso_get_token" {
 		var user *model.User
 		if policy != nil {
-			user, err = mappedOIDCUser(endpoint, idToken.Subject, userID, userID)
+			legacyID := userID
+			expression := setting.GetStr(conf.SSOOIDCUsernameMapping)
+			if expression != "" {
+				identity := oidcauth.Identity(endpoint, idToken.Subject)
+				if _, lookupErr := db.GetUserBySSOID(identity); errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+					var claims map[string]interface{}
+					if err = idToken.Claims(&claims); err == nil {
+						userID, err = oidcauth.Username(c.Request.Context(), expression, claims)
+					}
+					if err != nil {
+						common.ErrorStrResp(c, "OIDC username generation failed", 400)
+						return
+					}
+				} else if lookupErr != nil {
+					common.ErrorResp(c, lookupErr, 500)
+					return
+				}
+			}
+			user, err = mappedOIDCUser(endpoint, idToken.Subject, userID, legacyID)
 		} else {
 			user, err = db.GetUserBySSOID(userID)
 			if err != nil {
