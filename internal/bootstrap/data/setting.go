@@ -208,6 +208,7 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.SSOJwtPublicKey, Value: "", Type: conf.TypeString, Group: model.SSO, Flag: model.PRIVATE},
 		{Key: conf.SSOOIDCResource, Value: "", Type: conf.TypeString, Group: model.SSO, Flag: model.PRIVATE, Help: "Expected JWT access-token audience and OAuth2 resource indicator. Required when OIDC role mapping is enabled."},
 		{Key: conf.SSOOIDCRoleMapping, Value: "", Type: conf.TypeText, Group: model.SSO, Flag: model.PRIVATE, Help: "OIDC only: one CEL expression using verified access-token claims as claims, returning admin, general, or guest. Return guest explicitly for unmatched roles; invalid expressions reject access. Leave empty to retain legacy SSO login for unbound accounts. Mapping changes require a new login."},
+		{Key: conf.SSOOIDCUsernameMapping, Value: "", Type: conf.TypeText, Group: model.SSO, Flag: model.PRIVATE, Help: "OIDC role mapping only: CEL expression using verified ID-token claims as claims to generate the initial username, for example 'oidc:' + claims.sub. Existing accounts retain their names. Empty uses the existing username claim setting."},
 		{Key: conf.SSOExtraScopes, Value: "", Type: conf.TypeString, Group: model.SSO, Flag: model.PRIVATE},
 		{Key: conf.SSOAutoRegister, Value: "false", Type: conf.TypeBool, Group: model.SSO, Flag: model.PRIVATE},
 		{Key: conf.SSODefaultDir, Value: "/", Type: conf.TypeString, Group: model.SSO, Flag: model.PRIVATE},
