@@ -25,7 +25,7 @@ concurrency:
 
 env:
   DOCKERHUB_ORG_NAME: ${{ vars.DOCKERHUB_ORG_NAME || 'openlistteam' }}
-  GHCR_ORG_NAME: ${{ vars.GHCR_ORG_NAME || github.repository_owner }}
+  GHCR_ORG_NAME: ${{ vars.GHCR_ORG_NAME || (github.repository_owner == 'OpenListTeam' && 'openlistteam' || github.repository_owner) }}
   FRONTEND_REPO: ${{ vars.FRONTEND_REPO || format('{0}/OpenList-Frontend', github.repository_owner) }}
   FRONTEND_TAG: ${{ vars.FRONTEND_TAG || (github.repository_owner != 'OpenListTeam' && (github.event_name == 'workflow_dispatch' && github.event.inputs.manual_tag || github.ref_name) || '') }}
   DOCKERHUB_ENABLED: ${{ github.repository_owner == 'OpenListTeam' || vars.DOCKERHUB_ORG_NAME != '' }}
