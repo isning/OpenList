@@ -25,7 +25,10 @@ concurrency:
 
 env:
   DOCKERHUB_ORG_NAME: ${{ vars.DOCKERHUB_ORG_NAME || 'openlistteam' }}
-  GHCR_ORG_NAME: ${{ vars.GHCR_ORG_NAME || 'openlistteam' }}
+  GHCR_ORG_NAME: ${{ vars.GHCR_ORG_NAME || github.repository_owner }}
+  FRONTEND_REPO: ${{ vars.FRONTEND_REPO || format('{0}/OpenList-Frontend', github.repository_owner) }}
+  FRONTEND_TAG: ${{ vars.FRONTEND_TAG || (github.repository_owner != 'OpenListTeam' && (github.event_name == 'workflow_dispatch' && github.event.inputs.manual_tag || github.ref_name) || '') }}
+  DOCKERHUB_ENABLED: ${{ github.repository_owner == 'OpenListTeam' || vars.DOCKERHUB_ORG_NAME != '' }}
   IMAGE_NAME: openlist-git
   IMAGE_NAME_DOCKERHUB: openlist
   REGISTRY: ghcr.io
@@ -35,6 +38,7 @@ env:
   IMAGE_PUSH: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 
 permissions:
+  contents: read
   packages: write
 
 jobs:
@@ -66,7 +70,8 @@ jobs:
         run: bash build.sh release docker-multiplatform
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
+          FRONTEND_REPO: ${{ env.FRONTEND_REPO }}
+          FRONTEND_TAG: ${{ env.FRONTEND_TAG }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -106,7 +111,8 @@ jobs:
         run: bash build.sh release lite docker-multiplatform
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
+          FRONTEND_REPO: ${{ env.FRONTEND_REPO }}
+          FRONTEND_TAG: ${{ env.FRONTEND_TAG }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -167,7 +173,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to DockerHub Container Registry
-        if: env.IMAGE_PUSH == 'true'
+        if: env.IMAGE_PUSH == 'true' && env.DOCKERHUB_ENABLED == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           username: ${{ vars.DOCKERHUB_ORG_NAME_BACKUP || env.DOCKERHUB_ORG_NAME }}
@@ -179,7 +185,7 @@ jobs:
         with:
           images: |
             ${{ env.REGISTRY }}/${{ env.GHCR_ORG_NAME }}/${{ env.IMAGE_NAME }}
-            ${{ env.DOCKERHUB_ORG_NAME }}/${{ env.IMAGE_NAME_DOCKERHUB }}
+            ${{ env.DOCKERHUB_ENABLED == 'true' && format('{0}/{1}', env.DOCKERHUB_ORG_NAME, env.IMAGE_NAME_DOCKERHUB) || '' }}
           tags: >
             ${{ github.event_name == 'workflow_dispatch'
                 && format('type=raw,value={0}', github.event.inputs.manual_tag)
@@ -251,7 +257,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to DockerHub Container Registry
-        if: env.IMAGE_PUSH == 'true'
+        if: env.IMAGE_PUSH == 'true' && env.DOCKERHUB_ENABLED == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           username: ${{ vars.DOCKERHUB_ORG_NAME_BACKUP || env.DOCKERHUB_ORG_NAME }}
@@ -263,7 +269,7 @@ jobs:
         with:
           images: |
             ${{ env.REGISTRY }}/${{ env.GHCR_ORG_NAME }}/${{ env.IMAGE_NAME }}
-            ${{ env.DOCKERHUB_ORG_NAME }}/${{ env.IMAGE_NAME_DOCKERHUB }}
+            ${{ env.DOCKERHUB_ENABLED == 'true' && format('{0}/{1}', env.DOCKERHUB_ORG_NAME, env.IMAGE_NAME_DOCKERHUB) || '' }}
           tags: >
             ${{ github.event_name == 'workflow_dispatch'
                 && format('type=raw,value={0}', github.event.inputs.manual_tag)
